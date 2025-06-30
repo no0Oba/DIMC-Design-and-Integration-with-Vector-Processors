@@ -1,4 +1,4 @@
-
+`timescale 1ns/1ps
 module tb_DIMC_latency_fixed();
 
 // Clock and Reset
