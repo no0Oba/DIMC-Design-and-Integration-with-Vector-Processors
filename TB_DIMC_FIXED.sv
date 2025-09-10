@@ -62,7 +62,7 @@ initial begin
     M = 0; MCT = 0;
     
     #20 RESETn = 1;
-    $display("[%0t] Reset released", $time);
+    $display("[%0t ns] Reset released", $realtime/1000);
 end
 
 // Main test sequence
@@ -106,32 +106,27 @@ task test_memory_latency();
     WA = 0; D = 256'hA5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5; WCSN = 0; WEN = 0;
     @(posedge RCK);    WCSN = 1; WEN = 1;
     write_time = $time - start_time;
-    $display("[MEM] Write operation took %0t ns", write_time);
+    $display("[MEM] Write operation took %0t ns", write_time/ 1000);
     
-    // Write to complete 
-    //@(posedge RCK);
 
     // Read operation (1 cycle)
     start_time = $time;
-    RA = 0; RCSN = 0;
-    //@(posedge RCK);   
-    @(posedge RCK);
-    //#0.01; 
+    RA = 0; RCSN = 0; 
     @(Q); // wait for Q to change (if it's a signal-driven read) 
     RCSN = 1; 
     read_time = $time - start_time;
-    $display("[MEM] Read operation took %0t ns", read_time);
+    $display("[MEM] Read operation took %0t ns", read_time/ 1000);
    
     
    
     // Verify both operations took exactly 10ns (1 cycle)
     if (write_time != 10) 
-        $error("Write latency incorrect! Expected 10ns, got %0t", write_time);
+        $error("Write latency incorrect! Expected 10ns, got %0t", write_time/ 1000);
     else 
         $display("Write latency verified");
     
     if (read_time != 10) 
-        $error("Read latency incorrect! Expected 10ns, got %0t", read_time);
+        $error("Read latency incorrect! Expected 10ns, got %0t", read_time/ 1000);
     else 
         $display("Read latency verified");
     
@@ -155,7 +150,7 @@ task test_mac_initial_latency();
     write_feature(0, 256'h00011111);
     
     // Start computation
-    @(posedge RCK);
+    //@(posedge RCK); we check it to remove the wait between feature load and compute let's see
     start_time = $time;
     start_compute(0, 2'b10); // 4-bit MAC mode
     wait(READYN == 0);
@@ -186,7 +181,7 @@ task test_mac_pipelining();
         #10; // Wait 1 cycle between starts
 	start_compute(0, 2'b00); // Start new computation //I edited 2'10
         #10; // Wait 1 cycle between starts
-   	start_compute(0, 2'b10); // Start new computation //I edited 2'10
+   	start_compute(0, 2'b11); // Start new computation //I edited 2'10
         #10; // Wait 1 cycle between starts
     end
     
@@ -197,7 +192,7 @@ task test_mac_pipelining();
     for (i = 0; i < 4; i++) begin
         wait(READYN == 0);
         times[i] = $time;
-        $display("[PIPE] Result %0d at %0t ns", i, times[i]);
+        $display("[PIPE] Result %0d at %0t ns", i, times[i]/1000);
         #10; // Prepare for next result
     end
     
@@ -271,7 +266,7 @@ task write_kernel(input int row, input int sec, input [255:0] data);
     WCSN = 0; WEN = 0;
     @(posedge RCK);
     WCSN = 1; WEN = 1;
-    $display("[%0t] Wrote kernel row %0d sec %0d: %h", $time, row, sec, data);
+    $display("[%0t ns] Wrote kernel row %0d sec %0d: %h", $realtime/1000, row, sec, data);
 endtask
 
 task write_feature(input int sec, input [255:0] data);
@@ -280,7 +275,7 @@ task write_feature(input int sec, input [255:0] data);
     FCSN = 0;
     @(posedge RCK);
     FCSN = 1;
-    $display("[%0t] Wrote feature sec %0d: %h", $time, sec, data);
+    $display("[%0t ns] Wrote feature sec %0d: %h", $realtime/1000, sec, data);
 endtask
 
 task start_compute(input int row, input [1:0] mode);
@@ -292,7 +287,7 @@ task start_compute(input int row, input [1:0] mode);
     @(posedge RCK);
     RCSN = 1; RCSN0 = 1; RCSN1 = 1; RCSN2 = 1; RCSN3 = 1;
     COMPE = 0;
-    $display("[%0t] Started compute row %0d mode %b", $time, row, mode);
+    $display("[%0t ns] Started compute row %0d mode %b", $realtime/1000, row, mode);
 endtask
 
 task verify_result(input [23:0] expected_psout, input [3:0] expected_out);
@@ -313,8 +308,8 @@ endtask
 // Monitor
 always @(posedge RCK) begin
     if (READYN === 1'b0) begin
-        $display("[%0t] OUTPUT: PSOUT=%0d RES_OUT=%b SOUT=%b", 
-                $time, PSOUT, RES_OUT, SOUT);
+        $display("[%0t ns] OUTPUT: PSOUT=%0d RES_OUT=%b SOUT=%b", 
+                $realtime/1000, PSOUT, RES_OUT, SOUT);
     end
 end
 
