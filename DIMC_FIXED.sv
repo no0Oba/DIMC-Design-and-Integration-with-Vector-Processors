@@ -1,24 +1,32 @@
+// DIMC.sv created
 
-module DIMC_18_fixed (
+`timescale 1ns/1ps
+
+    module DIMC_18_fixed #(
+    
+ 	    //Parameter for Section Width
+    parameter SECTION_WIDTH = 256   // can be 256, 512, or 1024
+)(
+
     // System Interface
     input  logic        RCK,        // Main clock
     input  logic        RESETn,     // Active-low reset
     
     // Control Signals
     output logic        READYN,     // Active-low ready (output valid)
-    input  logic        COMPE,      // Operation mode (1=compute, 0=memory)
+    input  logic        COMPE,      // Operation mode (1=compute, -
     input  logic        FCSN,       // Feature buffer chip select (active-low)
     input  logic [1:0]  MODE,       // Bit resolution (0=1b, 1=2b, 2=4b)
     
     // Address/Data Interface
     input  logic [1:0]  FA,         // Feature buffer address
-    input  logic [255:0] FD,        // Feature buffer data
+    input  logic [SECTION_WIDTH-1:0] FD,        // Feature buffer data
     input  logic [23:0] ADDIN,      // Bias/partial sum input
     output logic        SOUT,       // Sum output (LSB of result)
     output logic [2:0]  RES_OUT,    // Result output (MSBs of 4-bit result)
     output logic [23:0] PSOUT,      // Pre-ReLU output
-    output logic [255:0] Q,         // Memory output
-    input  logic [255:0] D,         // Memory input
+    output logic [SECTION_WIDTH-1:0] Q,         // Memory output
+    input  logic [SECTION_WIDTH-1:0] D,         // Memory input
     input  logic [6:0]  RA,         // Memory address
     input  logic [6:0]  WA,         // Write address
     
@@ -33,15 +41,25 @@ module DIMC_18_fixed (
     input  logic        WEN,        // Write enable (active-low)
     
     // Masking Signals
-    input  logic [255:0] M,         // Bitwise write mask
+    input  logic [SECTION_WIDTH-1:0] M,         // Bitwise write mask
     input  logic [7:0]  MCT         // Masking coding thermometric
+    
+   
 );
+
+
+//------------------------------------------------------------------------------
+// Derived Parameters
+//------------------------------------------------------------------------------
+
+localparam NUM_SECTIONS = 1024/SECTION_WIDTH;
+localparam ROW_WIDTH = NUM_SECTIONS * SECTION_WIDTH;
 
 //------------------------------------------------------------------------------
 // Memory Architecture
 //------------------------------------------------------------------------------
-logic [31:0][3:0][255:0] kernel_mem;  // 32 rows, 4 sections, 256 bits each
-logic [3:0][255:0] feature_buf;       // 4 sections, 256 bits each
+logic [31:0][NUM_SECTIONS-1:0][SECTION_WIDTH-1:0] kernel_mem;  // 32 rows, 4 sections, 256 bits each
+logic [NUM_SECTIONS-1:0][SECTION_WIDTH-1:0] feature_buf;       // 4 sections, 256 bits each
 
 //------------------------------------------------------------------------------
 // Control Signals and Registers
@@ -55,14 +73,14 @@ logic [10:0] valid_bits;
 logic [3:0]  pipeline_valid;  // Valid flag for each stage
 logic [4:0]  pipeline_row [0:3];
 logic [23:0] pipeline_bias [0:3];
-logic [1023:0] pipeline_kernel [0:3];
-logic [1023:0] pipeline_feature [0:3];
+logic [ROW_WIDTH-1:0] pipeline_kernel [0:3];
+logic [ROW_WIDTH-1:0] pipeline_feature [0:3];
 logic [23:0]  pipeline_result [0:3];
 logic [1:0]  pipeline_mode [0:3];
 
 // Computation intermediates
-logic [1023:0] masked_kernel;
-logic [1023:0] masked_feature;
+logic [ROW_WIDTH-1:0] masked_kernel;
+logic [ROW_WIDTH-1:0] masked_feature;
 logic [23:0] comp_result;
 
 // Output logic
@@ -108,7 +126,7 @@ always_comb begin
     case (pipeline_mode[1])
         // 1-bit Mode: XNOR + Popcount
         2'b00: begin
-            logic [1023:0] xnor_result;
+            logic [ROW_WIDTH-1:0] xnor_result;
             logic [10:0] popcount;
             
             xnor_result = ~(masked_kernel ^ masked_feature);
@@ -134,16 +152,15 @@ always_comb begin
             end
         end
         
-        // Default Mode: AND + Popcount
+        // Default: 8-bit Mode (vector multiplication)
         default: begin
-            logic [1023:0] and_result;
-            logic [10:0] popcount;
-            
-            and_result = masked_kernel & masked_feature;
-            popcount = $countones(and_result);
-            comp_result = popcount;
-        end
-    endcase
+             for (int i = 0; i < ROW_WIDTH/8; i++) begin
+                 automatic logic [7:0] k_val = masked_kernel[i*8 +: 8];
+                 automatic logic [7:0] f_val = masked_feature[i*8 +: 8];
+                 comp_result += k_val * f_val;
+             end
+         end
+   endcase
 end
 
 // Stage 3: Output processing
@@ -206,26 +223,44 @@ always_ff @(posedge RCK or negedge RESETn) begin
     end
     else begin
         pipeline_valid[0] <= compute_trigger;
-        
+
         if (compute_trigger) begin
             pipeline_row[0]   <= RA[6:2];  // 5-bit row index
             pipeline_bias[0]  <= ADDIN;
             pipeline_mode[0]  <= MODE;
-            
-            // Assemble full rows
-            pipeline_kernel[0] <= {
-                kernel_mem[RA[6:2]][3],
-                kernel_mem[RA[6:2]][2],
-                kernel_mem[RA[6:2]][1],
-                kernel_mem[RA[6:2]][0]
-            };
-            
-            pipeline_feature[0] <= {
-                feature_buf[3],
-                feature_buf[2],
-                feature_buf[1],
-                feature_buf[0]
-            };
+
+            if (SECTION_WIDTH == 256) begin
+                pipeline_kernel[0] <= {
+                    kernel_mem[RA[6:2]][3],
+                    kernel_mem[RA[6:2]][2],
+                    kernel_mem[RA[6:2]][1],
+                    kernel_mem[RA[6:2]][0]
+                };
+                pipeline_feature[0] <= {
+                    feature_buf[3],
+                    feature_buf[2],
+                    feature_buf[1],
+                    feature_buf[0]
+                };
+            end
+            else if (SECTION_WIDTH == 512) begin
+                pipeline_kernel[0] <= {
+                    kernel_mem[RA[6:2]][1],
+                    kernel_mem[RA[6:2]][0]
+                };
+                pipeline_feature[0] <= {
+                    feature_buf[1],
+                    feature_buf[0]
+                };
+            end
+            else if (SECTION_WIDTH == 1024) begin
+                pipeline_kernel[0] <= kernel_mem[RA[6:2]][0];
+                pipeline_feature[0] <= feature_buf[0];
+            end
+            else begin
+                pipeline_kernel[0] <= '0;  // default/fallback
+                pipeline_feature[0] <= '0;
+            end
         end
     end
 end
